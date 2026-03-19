@@ -3,6 +3,8 @@ import sys
 import importlib.util
 from typing import Any, Dict, List, Optional
 
+import numpy as np
+
 
 CURRENT_DIR = os.path.dirname(__file__)
 REPO_MANAGER_DIR = os.path.abspath(os.path.join(CURRENT_DIR, "..", "RepoManager"))
@@ -107,16 +109,17 @@ def embed_functions(
 def extract_and_embed_functions(
     repo_path: Optional[str] = None,
     model_name: str = DEFAULT_EMBEDDING_MODEL,
+    model: Optional[Any] = None,
     batch_size: int = 32,
 ) -> Dict[str, object]:
     function_extractor = load_function_extractor_module()
     functions, scanned_file_count, filtered_file_count = function_extractor.extract_functions_from_filtered_files(
         repo_path=repo_path
     )
-    model = load_embedding_model(model_name=model_name)
+    model_instance = model or load_embedding_model(model_name=model_name)
     embedded_items = embed_functions(
         functions,
-        model=model,
+        model=model_instance,
         model_name=model_name,
         batch_size=batch_size,
     )
@@ -130,6 +133,69 @@ def extract_and_embed_functions(
         "function_count": len(functions),
         "embedding_dimension": embedding_dimension,
         "items": embedded_items,
+    }
+
+
+def score_functions_by_query(
+    query: str,
+    embedded_items: List[Dict[str, object]],
+    model: Optional[Any] = None,
+    model_name: str = DEFAULT_EMBEDDING_MODEL,
+) -> List[Dict[str, object]]:
+    if not embedded_items:
+        return []
+
+    model_instance = model or load_embedding_model(model_name=model_name)
+    query_vector = model_instance.encode(
+        [query],
+        normalize_embeddings=True,
+        convert_to_numpy=True,
+    )[0]
+
+    scored_items: List[Dict[str, object]] = []
+    for item in embedded_items:
+        item_vector = np.asarray(item["embedding"], dtype=float)
+        score = float(np.dot(query_vector, item_vector))
+
+        scored_item = dict(item)
+        scored_item["score"] = score
+        scored_items.append(scored_item)
+
+    scored_items.sort(key=lambda x: x["score"], reverse=True)
+    return scored_items
+
+
+def query_top_functions(
+    query: str,
+    top_k: int = 3,
+    repo_path: Optional[str] = None,
+    model_name: str = DEFAULT_EMBEDDING_MODEL,
+    batch_size: int = 32,
+) -> Dict[str, object]:
+    model = load_embedding_model(model_name=model_name)
+    extraction_result = extract_and_embed_functions(
+        repo_path=repo_path,
+        model_name=model_name,
+        model=model,
+        batch_size=batch_size,
+    )
+    scored_items = score_functions_by_query(
+        query=query,
+        embedded_items=extraction_result["items"],
+        model=model,
+        model_name=model_name,
+    )
+    top_results = scored_items[:top_k]
+
+    return {
+        "query": query,
+        "model_name": model_name,
+        "filtered_file_count": extraction_result["filtered_file_count"],
+        "scanned_file_count": extraction_result["scanned_file_count"],
+        "function_count": extraction_result["function_count"],
+        "embedding_dimension": extraction_result["embedding_dimension"],
+        "top_k": top_k,
+        "results": top_results,
     }
 
 

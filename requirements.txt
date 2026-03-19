@@ -1,2 +1,4 @@
 GitPython
 sentence-transformers
+groq
+python-dotenv

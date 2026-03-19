@@ -21,5 +21,10 @@ tmp/
 # OS/editor files
 .DS_Store
 
+# Local secrets
+.env
+.env.*
+!.env.example
+
 # Local cloned repository artifacts
 Backend/repo/
