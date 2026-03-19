@@ -1,0 +1,25 @@
+# Python cache/artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Build/test/tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+temp/
+tmp/
+**/temp/
+**/tmp/
+
+# OS/editor files
+.DS_Store
+
+# Local cloned repository artifacts
+Backend/repo/
