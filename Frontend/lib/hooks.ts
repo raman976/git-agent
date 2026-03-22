@@ -25,13 +25,78 @@ export function useStreamingAgent() {
       addEvent({ type: "status", data: { stage: "starting", message: "Initializing..." } });
 
       try {
+        // Step 1: Start the cloning process
+        addEvent({
+          type: "status",
+          data: { stage: "cloning", message: "Starting repository clone..." },
+        });
+
+        const cloneResponse = await fetch(`${API_URL}/repo/clone`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ repo_url: repoUrl }),
+        });
+
+        if (!cloneResponse.ok) {
+          throw new Error(`Failed to start cloning: ${cloneResponse.statusText}`);
+        }
+
+        const { task_id } = await cloneResponse.json();
+
+        // Step 2: Poll for cloning status
+        let cloning = true;
+        let finalStatus = null;
+        const startTime = Date.now();
+        const timeout = 300000; // 5 minutes
+
+        while (cloning) {
+          if (Date.now() - startTime > timeout) {
+            throw new Error("Repository cloning timed out.");
+          }
+
+          const statusResponse = await fetch(`${API_URL}/repo/clone/status/${task_id}`);
+          if (!statusResponse.ok) {
+            // Allow 404 for a short period as the job might not be in the dict yet
+            if (statusResponse.status === 404 && Date.now() - startTime < 10000) {
+              await new Promise((resolve) => setTimeout(resolve, 2000));
+              continue;
+            }
+            throw new Error(`Failed to get cloning status: ${statusResponse.statusText}`);
+          }
+
+          const statusResult = await statusResponse.json();
+
+          switch (statusResult.status) {
+            case "completed":
+              cloning = false;
+              finalStatus = statusResult;
+              addEvent({
+                type: "status",
+                data: { stage: "cloning", message: "Repository cloned successfully." },
+              });
+              break;
+            case "error":
+              throw new Error(`Cloning failed: ${statusResult.message}`);
+            case "cloning":
+              addEvent({
+                type: "status",
+                data: { stage: "cloning", message: "Cloning in progress..." },
+              });
+              await new Promise((resolve) => setTimeout(resolve, 2000));
+              break;
+            default:
+              await new Promise((resolve) => setTimeout(resolve, 2000));
+          }
+        }
+
+        // Step 3: Proceed with the original query logic
         const sessionId = getOrCreateSessionId();
         addEvent({
           type: "status",
           data: { stage: "reasoning", message: "Generating complete response..." },
         });
 
-        const response = await fetch(`${API_URL}/query`, {
+        const queryResponse = await fetch(`${API_URL}/query`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -43,10 +108,10 @@ export function useStreamingAgent() {
           }),
         });
 
-        if (!response.ok) {
-          throw new Error(`API error: ${response.statusText}`);
+        if (!queryResponse.ok) {
+          throw new Error(`API error: ${queryResponse.statusText}`);
         }
-        const payload = await response.json();
+        const payload = await queryResponse.json();
 
         if (payload?.plan) {
           setPlan(payload.plan, String(payload?.planning_model_used || "unknown"));

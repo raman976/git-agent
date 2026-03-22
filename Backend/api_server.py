@@ -1,15 +1,11 @@
-"""
-FastAPI server for Gh Agent with streaming support.
-Exposes endpoints for repo analysis and real-time agent execution.
-"""
 
 import json
 import asyncio
 import os
 import threading
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator, Optional, Dict
 from uuid import uuid4
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -33,6 +29,14 @@ session_manager = SessionManager(
     max_repo_storage_bytes=int(os.getenv("MAX_REPO_STORAGE_BYTES", str(2 * 1024 * 1024 * 1024))),
 )
 
+cloning_jobs: Dict[str, Dict] = {}
+
+def run_clone_in_background(repo_url: str, task_id: str):
+    try:
+        repo_path = clone_repository(repo_url)
+        cloning_jobs[task_id] = {"status": "completed", "repo_path": repo_path}
+    except Exception as e:
+        cloning_jobs[task_id] = {"status": "error", "message": str(e)}
 
 def _parse_allowed_origins() -> list[str]:
     raw = os.getenv("CORS_ALLOWED_ORIGINS", "")
@@ -54,6 +58,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+class CloneRequest(BaseModel):
+    repo_url: str
+
+@app.post("/repo/clone")
+async def start_cloning(request: CloneRequest, background_tasks: BackgroundTasks):
+    task_id = str(uuid4())
+    cloning_jobs[task_id] = {"status": "cloning"}
+    background_tasks.add_task(run_clone_in_background, request.repo_url, task_id)
+    return {"task_id": task_id}
+
+@app.get("/repo/clone/status/{task_id}")
+async def get_cloning_status(task_id: str):
+    job = cloning_jobs.get(task_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return job
 
 class QueryRequest(BaseModel):
     """Request model for agent queries."""
