@@ -330,7 +330,7 @@ async def query_sync(request: QueryRequest):
     Synchronous query execution (non-streaming).
     Returns complete result.
     """
-    try:
+    def _execute_sync_query() -> dict:
         query_scope = classify_query_scope(request.query)
         session_id = request.session_id or str(uuid4())
         session = session_manager.get_session(session_id)
@@ -371,8 +371,11 @@ async def query_sync(request: QueryRequest):
         result["repo_mode"] = session.repo_mode
         result["repo_commit_sha"] = session.repo_commit_sha
         return result
+
+    try:
+        return await asyncio.to_thread(_execute_sync_query)
     except Exception as e:
-        logger.error(f"Error in query_sync: {str(e)}")
+        logger.error(f"Error in query_sync: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

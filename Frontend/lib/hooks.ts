@@ -26,12 +26,17 @@ export function useStreamingAgent() {
 
       try {
         const sessionId = getOrCreateSessionId();
-        const response = await fetch(`${API_URL}/query/stream`, {
+        addEvent({
+          type: "status",
+          data: { stage: "reasoning", message: "Generating complete response..." },
+        });
+
+        const response = await fetch(`${API_URL}/query`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             repo_url: repoUrl,
-            query: query,
+            query,
             session_id: sessionId,
             budget_mode: true,
             max_reasoning_steps: 2,
@@ -41,89 +46,52 @@ export function useStreamingAgent() {
         if (!response.ok) {
           throw new Error(`API error: ${response.statusText}`);
         }
+        const payload = await response.json();
 
-        const reader = response.body?.getReader();
-        if (!reader) throw new Error("No response body");
-
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-          buffer += decoder.decode(value, { stream: !done });
-
-          if (done) break;
-
-          // Process complete lines
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || ""; // Keep the incomplete line in the buffer
-
-          for (const line of lines) {
-            if (!line.trim()) continue;
-
-            try {
-              const event = JSON.parse(line);
-
-              // Add event to timeline
-              addEvent({ type: event.type, data: event });
-
-              // Process specific event types
-              switch (event.type) {
-                case "plan":
-                  setPlan(event.plan, event.planning_model);
-                  break;
-
-                case "tool_call":
-                  addToolCall({
-                    step: event.step,
-                    tool_name: event.tool_name,
-                    status: event.status,
-                  });
-                  break;
-
-                case "tool_result":
-                  addToolCall({
-                    step: event.step,
-                    tool_name: event.tool_name,
-                    status: "completed",
-                    result_preview: event.result_preview,
-                  });
-                  break;
-
-                case "answer_chunk":
-                  addAnswerChunk(event.chunk);
-                  break;
-
-                case "complete":
-                  setComplete(event.model_used, event.total_tool_calls);
-                  setIsExecuting(false);
-                  break;
-
-                case "error":
-                  throw new Error(event.error);
-              }
-            } catch (e) {
-              if (!(e instanceof SyntaxError)) {
-                throw e;
-              }
-              // Ignore JSON parse errors for now
-            }
-          }
+        if (payload?.plan) {
+          setPlan(payload.plan, String(payload?.planning_model_used || "unknown"));
+          addEvent({
+            type: "plan",
+            data: {
+              plan: payload.plan,
+              planning_model: String(payload?.planning_model_used || "unknown"),
+            },
+          });
         }
 
-        // Process any remaining data
-        if (buffer.trim()) {
-          try {
-            const event = JSON.parse(buffer);
-            addEvent({ type: event.type, data: event });
-
-            if (event.type === "complete") {
-              setComplete(event.model_used, event.total_tool_calls);
-            }
-          } catch (e) {
-            // Ignore
-          }
+        const toolCalls = Array.isArray(payload?.tool_calls_executed)
+          ? payload.tool_calls_executed
+          : [];
+        for (const [index, toolCall] of toolCalls.entries()) {
+          const toolName = String(toolCall?.name || "unknown");
+          const step = `${index + 1}/${toolCalls.length}`;
+          addToolCall({ step, tool_name: toolName, status: "completed" });
+          addEvent({
+            type: "tool_result",
+            data: {
+              step,
+              tool_name: toolName,
+              result_preview: toolCall?.result_preview,
+            },
+          });
         }
+
+        const finalAnswer = String(payload?.final_answer || "");
+        if (finalAnswer) {
+          addAnswerChunk(finalAnswer);
+        }
+
+        const modelUsed = String(payload?.model_used || "unknown");
+        const totalToolCalls = toolCalls.length;
+        setComplete(modelUsed, totalToolCalls);
+        addEvent({
+          type: "complete",
+          data: {
+            model_used: modelUsed,
+            total_tool_calls: totalToolCalls,
+            mode: "sync",
+          },
+        });
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error occurred";
