@@ -15,12 +15,23 @@ from Backend.RepoManager.clone import clone_repository
 from Backend.LLMHandler.agent_graph import classify_query_scope, run_multi_reasoning_agent
 from Backend.LLMHandler.config import DEFAULT_EMBEDDING_MODEL
 from Backend.LLMHandler.session_manager import SessionManager
+from Backend.FunctionHandler.functionTOtext import load_embedding_model
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Gh Agent API", version="1.0.0")
+
+@app.on_event("startup")
+async def startup_event():
+    logger.info("Starting up and loading embedding model...")
+    try:
+        load_embedding_model(DEFAULT_EMBEDDING_MODEL)
+        logger.info("Embedding model loaded successfully.")
+    except Exception as e:
+        logger.error(f"Failed to load embedding model on startup: {e}")
+
 session_manager = SessionManager(
     ttl_seconds=int(os.getenv("SESSION_TTL_SECONDS", "600")),
     max_history_turns=6,
