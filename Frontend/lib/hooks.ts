@@ -24,63 +24,63 @@ export function useStreamingAgent() {
       setIsExecuting(true);
       addEvent({ type: "status", data: { stage: "starting", message: "Initializing..." } });
 
+      let sessionId = getOrCreateSessionId(); // Get or create session ID upfront
+
       try {
-        // Step 1: Start the cloning process
+        // Step 1: Start the repository preparation process
         addEvent({
           type: "status",
-          data: { stage: "cloning", message: "Starting repository clone..." },
+          data: { stage: "preparing", message: "Starting repository preparation..." },
         });
 
-        const cloneResponse = await fetch(`${API_URL}/repo/clone`, {
+        const prepareResponse = await fetch(`${API_URL}/repo/prepare`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ repo_url: repoUrl }),
+          body: JSON.stringify({ repo_url: repoUrl, query: query, session_id: sessionId }),
         });
 
-        if (!cloneResponse.ok) {
-          throw new Error(`Failed to start cloning: ${cloneResponse.statusText}`);
+        if (!prepareResponse.ok) {
+          throw new Error(`Failed to start preparation: ${prepareResponse.statusText}`);
         }
 
-        const { task_id } = await cloneResponse.json();
+        const { task_id, session_id: returnedSessionId } = await prepareResponse.json();
+        sessionId = returnedSessionId; // Use the session_id returned by the backend
 
-        // Step 2: Poll for cloning status
-        let cloning = true;
-        let finalStatus = null;
+        // Step 2: Poll for preparation status
+        let preparing = true;
         const startTime = Date.now();
         const timeout = 300000; // 5 minutes
 
-        while (cloning) {
+        while (preparing) {
           if (Date.now() - startTime > timeout) {
-            throw new Error("Repository cloning timed out.");
+            throw new Error("Repository preparation timed out.");
           }
 
-          const statusResponse = await fetch(`${API_URL}/repo/clone/status/${task_id}`);
+          const statusResponse = await fetch(`${API_URL}/repo/prepare/status/${task_id}`);
           if (!statusResponse.ok) {
-            // Allow 404 for a short period as the job might not be in the dict yet
             if (statusResponse.status === 404 && Date.now() - startTime < 10000) {
               await new Promise((resolve) => setTimeout(resolve, 2000));
               continue;
             }
-            throw new Error(`Failed to get cloning status: ${statusResponse.statusText}`);
+            throw new Error(`Failed to get preparation status: ${statusResponse.statusText}`);
           }
 
           const statusResult = await statusResponse.json();
 
           switch (statusResult.status) {
             case "completed":
-              cloning = false;
-              finalStatus = statusResult;
+              preparing = false;
               addEvent({
                 type: "status",
-                data: { stage: "cloning", message: "Repository cloned successfully." },
+                data: { stage: "preparing", message: "Repository ready." },
               });
               break;
             case "error":
-              throw new Error(`Cloning failed: ${statusResult.message}`);
-            case "cloning":
+              throw new Error(`Preparation failed: ${statusResult.message}`);
+            case "preparing":
               addEvent({
                 type: "status",
-                data: { stage: "cloning", message: "Cloning in progress..." },
+                data: { stage: "preparing", message: "Analyzing and cloning repository..." },
               });
               await new Promise((resolve) => setTimeout(resolve, 2000));
               break;
@@ -90,7 +90,6 @@ export function useStreamingAgent() {
         }
 
         // Step 3: Proceed with the original query logic
-        const sessionId = getOrCreateSessionId();
         addEvent({
           type: "status",
           data: { stage: "reasoning", message: "Generating complete response..." },
@@ -102,7 +101,7 @@ export function useStreamingAgent() {
           body: JSON.stringify({
             repo_url: repoUrl,
             query,
-            session_id: sessionId,
+            session_id: sessionId, // Use the session ID from the prepare step
             budget_mode: true,
             max_reasoning_steps: 2,
           }),

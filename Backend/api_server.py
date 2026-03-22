@@ -40,14 +40,17 @@ session_manager = SessionManager(
     max_repo_storage_bytes=int(os.getenv("MAX_REPO_STORAGE_BYTES", str(2 * 1024 * 1024 * 1024))),
 )
 
-cloning_jobs: Dict[str, Dict] = {}
+preparation_jobs: Dict[str, Dict] = {}
 
-def run_clone_in_background(repo_url: str, task_id: str):
+def prepare_repo_in_background(repo_url: str, query: str, session_id: str, task_id: str):
+    """Runs the entire repo preparation process in the background."""
     try:
-        repo_path = clone_repository(repo_url)
-        cloning_jobs[task_id] = {"status": "completed", "repo_path": repo_path}
+        session = session_manager.get_session(session_id)
+        session_manager.prepare_repo(session, repo_url, query)
+        preparation_jobs[task_id] = {"status": "completed", "session_id": session_id}
     except Exception as e:
-        cloning_jobs[task_id] = {"status": "error", "message": str(e)}
+        logger.error(f"Repo preparation failed for task {task_id}: {e}", exc_info=True)
+        preparation_jobs[task_id] = {"status": "error", "message": str(e)}
 
 def _parse_allowed_origins() -> list[str]:
     raw = os.getenv("CORS_ALLOWED_ORIGINS", "")
@@ -70,19 +73,28 @@ app.add_middleware(
 )
 
 
-class CloneRequest(BaseModel):
+class PrepareRequest(BaseModel):
     repo_url: str
+    query: str  # Pass query to allow context-aware file selection during prep
+    session_id: Optional[str] = None
 
-@app.post("/repo/clone")
-async def start_cloning(request: CloneRequest, background_tasks: BackgroundTasks):
+@app.post("/repo/prepare")
+async def start_preparation(request: PrepareRequest, background_tasks: BackgroundTasks):
+    """
+    Starts the asynchronous preparation of a repository, including API snapshot and cloning.
+    """
+    session_id = request.session_id or str(uuid4())
     task_id = str(uuid4())
-    cloning_jobs[task_id] = {"status": "cloning"}
-    background_tasks.add_task(run_clone_in_background, request.repo_url, task_id)
-    return {"task_id": task_id}
+    preparation_jobs[task_id] = {"status": "preparing", "session_id": session_id}
+    background_tasks.add_task(
+        prepare_repo_in_background, request.repo_url, request.query, session_id, task_id
+    )
+    return {"task_id": task_id, "session_id": session_id}
 
-@app.get("/repo/clone/status/{task_id}")
-async def get_cloning_status(task_id: str):
-    job = cloning_jobs.get(task_id)
+@app.get("/repo/prepare/status/{task_id}")
+async def get_preparation_status(task_id: str):
+    """Polls for the status of the repository preparation."""
+    job = preparation_jobs.get(task_id)
     if not job:
         raise HTTPException(status_code=404, detail="Task not found")
     return job
@@ -148,6 +160,7 @@ async def stream_agent_execution(
 
             if query_scope != "general":
                 # Prepare repository only for repo/hybrid questions.
+                # This should be fast now since the heavy lifting was done in /repo/prepare
                 try:
                     previous_repo_path = session.repo_path
                     session_manager.prepare_repo(session, repo_url, query=query)
@@ -370,6 +383,7 @@ async def query_sync(request: QueryRequest):
         repo_path = None
         runtime = None
         if query_scope != "general":
+            # This should be fast now, as the heavy work is done in /repo/prepare
             session_manager.prepare_repo(session, request.repo_url, query=request.query)
             repo_path = session.repo_path
             if not repo_path:
