@@ -11,8 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-COPY Backend/requirements_api.txt /app/Backend/requirements_api.txt
-RUN pip install --upgrade pip && pip install -r /app/Backend/requirements_api.txt
+COPY requirements.txt /app/requirements.txt
+RUN pip install --upgrade pip && pip install -r /app/requirements.txt
 
 COPY Backend /app/Backend
 
