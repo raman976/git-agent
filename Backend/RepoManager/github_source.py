@@ -149,7 +149,7 @@ def parse_github_repo(repo_url: str) -> Tuple[str, str]:
 def _build_headers(token: Optional[str]) -> Dict[str, str]:
     headers = {
         "Accept": "application/vnd.github+json",
-        "User-Agent": "AwesomeRag-Agent",
+        "User-Agent": "Gh-Agent",
     }
     if token:
         headers["Authorization"] = f"Bearer {token}"

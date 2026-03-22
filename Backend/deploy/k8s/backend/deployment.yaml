@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gh-agent
+  namespace: gh-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gh-agent
+  template:
+    metadata:
+      labels:
+        app: gh-agent
+    spec:
+      containers:
+        - name: gh-agent
+          image: localhost:30500/gh-agent:v1
+          ports:
+            - containerPort: 8000
+          env:
+            - name: SESSION_TTL_SECONDS
+              value: "600"
+            - name: SESSION_CLEANUP_INTERVAL_SECONDS
+              value: "30"
+            - name: ORPHAN_REPO_TTL_SECONDS
+              value: "600"
+            - name: MAX_REPO_STORAGE_BYTES
+              value: "2147483648"
+            - name: CORS_ALLOW_ORIGIN_REGEX
+              value: "https://.*\\.vercel\\.app"
+            - name: CORS_ALLOWED_ORIGINS
+              value: "http://localhost:3000,http://127.0.0.1:3000"
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: gh-agent-secrets
+                  key: GITHUB_TOKEN
+            - name: llm_api_key
+              valueFrom:
+                secretKeyRef:
+                  name: gh-agent-secrets
+                  key: llm_api_key
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+              ephemeral-storage: 1Gi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+              ephemeral-storage: 3Gi
+          volumeMounts:
+            - name: repo-storage
+              mountPath: /app/Backend/repo
+      volumes:
+        - name: repo-storage
+          emptyDir:
+            sizeLimit: 2Gi

@@ -31,6 +31,7 @@ class SessionManager:
         max_history_turns: int = 6,
         cleanup_interval_seconds: int = 60,
         orphan_repo_ttl_seconds: Optional[int] = None,
+        max_repo_storage_bytes: Optional[int] = None,
     ):
         self.ttl_seconds = ttl_seconds
         self.max_history_turns = max_history_turns
@@ -40,6 +41,7 @@ class SessionManager:
             if orphan_repo_ttl_seconds is not None
             else self.ttl_seconds
         )
+        self.max_repo_storage_bytes = max_repo_storage_bytes
         self.base_repo_dir = os.path.abspath(
             os.path.join(os.path.dirname(__file__), "..", "repo")
         )
@@ -99,6 +101,75 @@ class SessionManager:
                 self._cleanup_expired_locked()
                 self._cleanup_orphan_session_dirs_locked()
                 self._cleanup_orphan_legacy_repo_dirs_locked()
+                self._enforce_repo_storage_budget_locked()
+
+    def _dir_size_bytes(self, root_path: str) -> int:
+        total = 0
+        for current_root, _, files in os.walk(root_path):
+            for name in files:
+                file_path = os.path.join(current_root, name)
+                try:
+                    total += os.path.getsize(file_path)
+                except OSError:
+                    continue
+        return total
+
+    def _enforce_repo_storage_budget_locked(self) -> None:
+        if not self.max_repo_storage_bytes or self.max_repo_storage_bytes <= 0:
+            return
+        if not os.path.isdir(self.base_repo_dir):
+            return
+
+        current_size = self._dir_size_bytes(self.base_repo_dir)
+        if current_size <= self.max_repo_storage_bytes:
+            return
+
+        active_session_dirs = {
+            self._session_dir(state.session_id)
+            for state in self._sessions.values()
+        }
+
+        deletion_candidates = []
+
+        # Prefer deleting inactive per-session directories first.
+        if os.path.isdir(self.sessions_root_dir):
+            for name in os.listdir(self.sessions_root_dir):
+                session_dir = os.path.abspath(os.path.join(self.sessions_root_dir, name))
+                if not os.path.isdir(session_dir):
+                    continue
+                if session_dir in active_session_dirs:
+                    continue
+                try:
+                    mtime = os.path.getmtime(session_dir)
+                except OSError:
+                    continue
+                deletion_candidates.append((mtime, session_dir, "session"))
+
+        # Then fall back to legacy root-level repo directories.
+        for name in os.listdir(self.base_repo_dir):
+            if name == "sessions":
+                continue
+            repo_path = os.path.abspath(os.path.join(self.base_repo_dir, name))
+            if not os.path.isdir(repo_path):
+                continue
+            try:
+                mtime = os.path.getmtime(repo_path)
+            except OSError:
+                continue
+            deletion_candidates.append((mtime, repo_path, "legacy"))
+
+        deletion_candidates.sort(key=lambda item: item[0])
+
+        for _, path, kind in deletion_candidates:
+            if current_size <= self.max_repo_storage_bytes:
+                break
+
+            if kind == "session":
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                self._delete_repo_dir(path)
+
+            current_size = self._dir_size_bytes(self.base_repo_dir)
 
     def _cleanup_orphan_session_dirs_locked(self) -> None:
         if self.orphan_repo_ttl_seconds <= 0:

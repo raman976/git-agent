@@ -1,4 +1,4 @@
-const STORAGE_KEY = "awesomerag_session_id";
+const STORAGE_KEY = "gh_agent_session_id";
 
 function getStorage(): Storage | null {
   if (typeof window === "undefined") {

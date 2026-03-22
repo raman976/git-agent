@@ -25,7 +25,7 @@ export default function Home() {
                 <Brain className="w-6 h-6 text-white" />
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-slate-900">AwesomeRag</h1>
+                <h1 className="text-2xl font-bold text-slate-900">Gh Agent</h1>
                 <p className="text-sm text-slate-600">Intelligent Repository Agent</p>
               </div>
             </div>
@@ -133,7 +133,7 @@ export default function Home() {
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 text-center text-sm text-slate-600">
           <p>Built with Next.js, FastAPI, and AI-powered code analysis</p>
           <p className="mt-2">
-            © 2026 AwesomeRag. All rights reserved.
+            © 2026 Gh Agent. All rights reserved.
           </p>
         </div>
       </footer>

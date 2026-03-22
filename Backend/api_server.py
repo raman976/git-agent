@@ -1,5 +1,5 @@
 """
-FastAPI server for AwesomeRag agent with streaming support.
+FastAPI server for Gh Agent with streaming support.
 Exposes endpoints for repo analysis and real-time agent execution.
 """
 
@@ -23,19 +23,32 @@ from Backend.LLMHandler.session_manager import SessionManager
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="AwesomeRag Agent API", version="1.0.0")
+app = FastAPI(title="Gh Agent API", version="1.0.0")
 session_manager = SessionManager(
     ttl_seconds=int(os.getenv("SESSION_TTL_SECONDS", "600")),
     max_history_turns=6,
     cleanup_interval_seconds=int(os.getenv("SESSION_CLEANUP_INTERVAL_SECONDS", "30")),
     orphan_repo_ttl_seconds=int(os.getenv("ORPHAN_REPO_TTL_SECONDS", "600")),
+    max_repo_storage_bytes=int(os.getenv("MAX_REPO_STORAGE_BYTES", str(2 * 1024 * 1024 * 1024))),
 )
+
+
+def _parse_allowed_origins() -> list[str]:
+    raw = os.getenv("CORS_ALLOWED_ORIGINS", "")
+    configured = [origin.strip() for origin in raw.split(",") if origin.strip()]
+    defaults = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+    # Keep order stable and remove duplicates.
+    return list(dict.fromkeys(defaults + configured))
 
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_parse_allowed_origins(),
+    allow_origin_regex=os.getenv("CORS_ALLOW_ORIGIN_REGEX", r"https://.*\.vercel\.app"),
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -65,7 +78,7 @@ class HealthResponse(BaseModel):
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     """Health check endpoint."""
-    return HealthResponse(status="ok", message="AwesomeRag Agent API is running")
+    return HealthResponse(status="ok", message="Gh Agent API is running")
 
 
 async def stream_agent_execution(

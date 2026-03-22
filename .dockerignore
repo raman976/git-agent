@@ -1,0 +1,30 @@
+# Git
+.git
+.gitignore
+
+# Python
+venv/
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Frontend/build artifacts
+Frontend/node_modules/
+Frontend/.next/
+node_modules/
+.next/
+
+# Runtime artifacts
+Backend/repo/
+*.log
+
+# Editor/OS
+.DS_Store
+.vscode/
+.idea/
