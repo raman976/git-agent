@@ -1,51 +1,13 @@
 import json
-import os
-import importlib.util
-import sys
 from typing import Any, Dict, Iterable, List, Optional
 
-from dotenv import load_dotenv
-from groq import Groq
+from langchain_groq import ChatGroq
+from langchain_core.messages import HumanMessage, SystemMessage
 
-
-DEFAULT_MODEL = "moonshotai/kimi-k2-instruct-0905"
-DEFAULT_SYSTEM_PROMPT = (
-    "You are a senior codebase assistant. Use only the provided context to answer. "
-    "If context is insufficient, explicitly say what is missing."
-)
-
-
-CURRENT_DIR = os.path.dirname(__file__)
-FUNCTION_HANDLER_DIR = os.path.abspath(os.path.join(CURRENT_DIR, "..", "FunctionHandler"))
-
-
-def load_function_tool_module() -> Any:
-    function_tool_path = os.path.join(FUNCTION_HANDLER_DIR, "functionTOtext.py")
-    if FUNCTION_HANDLER_DIR not in sys.path:
-        sys.path.insert(0, FUNCTION_HANDLER_DIR)
-
-    spec = importlib.util.spec_from_file_location("functionTOtext", function_tool_path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Unable to load functionTOtext from {function_tool_path}")
-
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def load_api_key(api_key_var: str = "llm_api_key") -> str:
-    load_dotenv()
-    api_key = os.getenv(api_key_var)
-    if not api_key:
-        raise ValueError(
-            f"Missing API key in environment variable '{api_key_var}'."
-        )
-    return api_key
-
-
-def get_client(api_key: Optional[str] = None, api_key_var: str = "llm_api_key") -> Groq:
-    resolved_key = api_key or load_api_key(api_key_var=api_key_var)
-    return Groq(api_key=resolved_key)
+from .agent_graph import run_multi_reasoning_agent
+from .config import DEFAULT_API_KEY_VAR, DEFAULT_EMBEDDING_MODEL, DEFAULT_MODEL, resolve_api_key
+from .prompts import DEFAULT_SYSTEM_PROMPT
+from .runtime import load_function_tool_module
 
 
 def _safe_get(item: Dict[str, Any], keys: Iterable[str], default: str = "") -> Any:
@@ -128,32 +90,39 @@ def generate_response(
     top_k_results: int = 3,
     stream: bool = True,
     api_key: Optional[str] = None,
-    api_key_var: str = "llm_api_key",
+    api_key_var: str = DEFAULT_API_KEY_VAR,
 ) -> str:
-    client = get_client(api_key=api_key, api_key_var=api_key_var)
+    resolved_key = resolve_api_key(api_key=api_key, api_key_var=api_key_var)
     messages = build_messages(question=question, results=results, top_k=top_k_results)
 
-    completion = client.chat.completions.create(
+    llm = ChatGroq(
         model=model,
-        messages=messages,
         temperature=temperature,
-        max_completion_tokens=max_completion_tokens,
+        max_tokens=max_completion_tokens,
         top_p=top_p,
-        stream=stream,
-        stop=None,
+        groq_api_key=resolved_key,
+        streaming=stream,
     )
+
+    prompt_messages = [
+        SystemMessage(content=messages[0]["content"]),
+        HumanMessage(content=messages[1]["content"]),
+    ]
 
     if stream:
         chunks: List[str] = []
-        for chunk in completion:
-            text = chunk.choices[0].delta.content or ""
+        for chunk in llm.stream(prompt_messages):
+            text = chunk.content or ""
             if text:
                 print(text, end="", flush=True)
                 chunks.append(text)
         print()
         return "".join(chunks)
 
-    return completion.choices[0].message.content or ""
+    response = llm.invoke(prompt_messages)
+    if isinstance(response.content, str):
+        return response.content
+    return str(response.content)
 
 
 def generate_response_from_query(
@@ -161,14 +130,14 @@ def generate_response_from_query(
     query_top_k: int = 3,
     context_top_k: int = 3,
     repo_path: Optional[str] = None,
-    embedding_model_name: str = "BAAI/bge-small-en-v1.5",
+    embedding_model_name: str = DEFAULT_EMBEDDING_MODEL,
     llm_model: str = DEFAULT_MODEL,
     temperature: float = 0.6,
     max_completion_tokens: int = 4096,
     top_p: float = 1.0,
     stream: bool = True,
     api_key: Optional[str] = None,
-    api_key_var: str = "llm_api_key",
+    api_key_var: str = DEFAULT_API_KEY_VAR,
 ) -> Dict[str, Any]:
     function_tool = load_function_tool_module()
     retrieval = function_tool.query_top_functions(
@@ -200,10 +169,9 @@ def generate_response_from_query(
 
 
 if __name__ == "__main__":
-    output = generate_response_from_query(
-        question="How does authentication work?",
-        query_top_k=3,
-        context_top_k=3,
-        stream=True,
+    output = run_multi_reasoning_agent(
+        question="How does authentication work in this repository?",
+        max_reasoning_steps=6,
     )
-    print("Top results used:", len(output["retrieval"].get("results", [])))
+    print("Tool calls:", len(output.get("tool_calls_executed", [])))
+    print("Final answer size:", len(output.get("final_answer", "")))

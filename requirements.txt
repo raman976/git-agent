@@ -2,3 +2,6 @@ GitPython
 sentence-transformers
 groq
 python-dotenv
+langchain
+langgraph
+langchain-groq
