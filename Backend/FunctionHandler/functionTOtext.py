@@ -1,6 +1,7 @@
 import os
 import sys
 import importlib.util
+import threading
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -25,6 +26,8 @@ def load_function_extractor_module() -> Any:
 
 
 DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
+_EMBEDDING_MODELS: Dict[str, Any] = {}
+_EMBEDDING_MODELS_LOCK = threading.Lock()
 
 
 def function_to_text(func: Dict[str, object]) -> str:
@@ -42,13 +45,20 @@ def function_to_text(func: Dict[str, object]) -> str:
 
 def load_embedding_model(model_name: str = DEFAULT_EMBEDDING_MODEL) -> Any:
     try:
-        from sentence_transformers import SentenceTransformer 
+        from sentence_transformers import SentenceTransformer
     except ImportError as exc:
         raise ImportError(
             "sentence-transformers is required. Install with: pip install sentence-transformers"
         ) from exc
 
-    return SentenceTransformer(model_name)
+    with _EMBEDDING_MODELS_LOCK:
+        cached = _EMBEDDING_MODELS.get(model_name)
+        if cached is not None:
+            return cached
+
+        model = SentenceTransformer(model_name)
+        _EMBEDDING_MODELS[model_name] = model
+        return model
 
 
 def build_function_documents(functions: List[Dict[str, object]]) -> List[str]:

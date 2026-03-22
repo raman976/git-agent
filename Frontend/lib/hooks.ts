@@ -4,7 +4,7 @@ import { useCallback, useEffect } from "react";
 import { useQueryStore } from "./store";
 import { getOrCreateSessionId } from "./session-id";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://gh-agent.nstsdc.org";
 
 export function useStreamingAgent() {
   const {

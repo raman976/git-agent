@@ -18,4 +18,4 @@ COPY Backend /app/Backend
 
 EXPOSE 8000
 
-CMD ["python", "-m", "uvicorn", "Backend.api_server:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "ulimit -n 65535 && exec python -m uvicorn Backend.api_server:app --host 0.0.0.0 --port 8000"]

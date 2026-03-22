@@ -6,6 +6,7 @@ Exposes endpoints for repo analysis and real-time agent execution.
 import json
 import asyncio
 import os
+import threading
 from typing import AsyncGenerator, Optional
 from uuid import uuid4
 from fastapi import FastAPI, HTTPException
@@ -155,16 +156,44 @@ async def stream_agent_execution(
                 "session_id": session_id,
             }) + "\n"
 
-            # Run agent
-            result = run_multi_reasoning_agent(
-                query,
-                repo_path=repo_path,
-                runtime=runtime,
-                conversation_context=history,
-                query_scope=query_scope,
-                budget_mode=budget_mode,
-                max_reasoning_steps=max_reasoning_steps,
-            )
+            # Run agent in a worker thread so we can keep the stream alive with heartbeats.
+            result_container: dict[str, object] = {}
+            error_container: dict[str, Exception] = {}
+            done = threading.Event()
+
+            def _run_agent() -> None:
+                try:
+                    result_container["result"] = run_multi_reasoning_agent(
+                        query,
+                        repo_path=repo_path,
+                        runtime=runtime,
+                        conversation_context=history,
+                        query_scope=query_scope,
+                        budget_mode=budget_mode,
+                        max_reasoning_steps=max_reasoning_steps,
+                    )
+                except Exception as agent_error:
+                    error_container["error"] = agent_error
+                finally:
+                    done.set()
+
+            threading.Thread(target=_run_agent, name="agent-runner", daemon=True).start()
+
+            while not done.wait(timeout=5):
+                yield json.dumps({
+                    "type": "status",
+                    "stage": "reasoning",
+                    "message": "Still processing...",
+                    "session_id": session_id,
+                }) + "\n"
+
+            if "error" in error_container:
+                raise error_container["error"]
+
+            result = result_container.get("result")
+            if not isinstance(result, dict):
+                raise RuntimeError("Agent returned an invalid response")
+
             session_manager.append_turn(
                 session,
                 user_query=query,
@@ -287,6 +316,11 @@ async def query_stream(request: QueryRequest):
             session_id,
         ),
         media_type="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 

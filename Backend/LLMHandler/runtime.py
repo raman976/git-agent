@@ -3,6 +3,7 @@ import json
 import os
 import re
 import sys
+import threading
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -12,9 +13,19 @@ from .config import DEFAULT_EMBEDDING_MODEL
 CURRENT_DIR = os.path.dirname(__file__)
 FUNCTION_HANDLER_DIR = os.path.abspath(os.path.join(CURRENT_DIR, "..", "FunctionHandler"))
 DEFAULT_TEXT_TRIM_LENGTH = 700
+_FUNCTION_TOOL_MODULE: Optional[Any] = None
+_FUNCTION_TOOL_MODULE_LOCK = threading.Lock()
 
 
 def load_function_tool_module() -> Any:
+    global _FUNCTION_TOOL_MODULE
+    if _FUNCTION_TOOL_MODULE is not None:
+        return _FUNCTION_TOOL_MODULE
+
+    with _FUNCTION_TOOL_MODULE_LOCK:
+        if _FUNCTION_TOOL_MODULE is not None:
+            return _FUNCTION_TOOL_MODULE
+
     function_tool_file = os.path.join(FUNCTION_HANDLER_DIR, "functionTOtext.py")
     if FUNCTION_HANDLER_DIR not in sys.path:
         sys.path.insert(0, FUNCTION_HANDLER_DIR)
@@ -25,7 +36,8 @@ def load_function_tool_module() -> Any:
 
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module
+    _FUNCTION_TOOL_MODULE = module
+    return _FUNCTION_TOOL_MODULE
 
 
 def trim_result_text(item: Dict[str, Any], max_chars: int = DEFAULT_TEXT_TRIM_LENGTH) -> Dict[str, Any]:

@@ -5,7 +5,7 @@ import { useQueryStore } from "../lib/store";
 import { getOrCreateSessionId, rotateSessionId } from "../lib/session-id";
 import clsx from "clsx";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://gh-agent.nstsdc.org";
 
 export function QueryForm({
   onSubmit,
