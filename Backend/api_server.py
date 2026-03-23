@@ -52,6 +52,12 @@ def prepare_repo_in_background(repo_url: str, query: str, session_id: str, task_
         logger.error(f"Repo preparation failed for task {task_id}: {e}", exc_info=True)
         preparation_jobs[task_id] = {"status": "error", "message": str(e)}
 
+
+def _is_same_repo(prepared_repo_url: Optional[str], requested_repo_url: str) -> bool:
+    if not prepared_repo_url:
+        return False
+    return prepared_repo_url.strip() == requested_repo_url.strip()
+
 def _parse_allowed_origins() -> list[str]:
     raw = os.getenv("CORS_ALLOWED_ORIGINS", "")
     configured = [origin.strip() for origin in raw.split(",") if origin.strip()]
@@ -152,6 +158,7 @@ async def stream_agent_execution(
             }) + "\n"
 
             session = session_manager.get_session(session_id)
+            normalized_repo_url = repo_url.strip()
 
             repo_path = None
             runtime = None
@@ -159,11 +166,15 @@ async def stream_agent_execution(
             runtime_reused = False
 
             if query_scope != "general":
-                # Prepare repository only for repo/hybrid questions.
-                # This should be fast now since the heavy lifting was done in /repo/prepare
+                # Reuse prepared repo when session already targets the same repository.
                 try:
                     previous_repo_path = session.repo_path
-                    session_manager.prepare_repo(session, repo_url, query=query)
+                    repo_needs_prepare = (
+                        not session.repo_path
+                        or not _is_same_repo(session.repo_url, normalized_repo_url)
+                    )
+                    if repo_needs_prepare:
+                        session_manager.prepare_repo(session, normalized_repo_url, query=query)
                     repo_path = session.repo_path
                     if not repo_path:
                         raise ValueError("Repository path could not be prepared")
@@ -379,12 +390,17 @@ async def query_sync(request: QueryRequest):
         query_scope = classify_query_scope(request.query)
         session_id = request.session_id or str(uuid4())
         session = session_manager.get_session(session_id)
+        normalized_repo_url = request.repo_url.strip()
 
         repo_path = None
         runtime = None
         if query_scope != "general":
-            # This should be fast now, as the heavy work is done in /repo/prepare
-            session_manager.prepare_repo(session, request.repo_url, query=request.query)
+            repo_needs_prepare = (
+                not session.repo_path
+                or not _is_same_repo(session.repo_url, normalized_repo_url)
+            )
+            if repo_needs_prepare:
+                session_manager.prepare_repo(session, normalized_repo_url, query=request.query)
             repo_path = session.repo_path
             if not repo_path:
                 raise ValueError("Repository path could not be prepared")

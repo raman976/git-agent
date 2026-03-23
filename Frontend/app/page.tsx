@@ -7,8 +7,12 @@ import { useStreamingAgent, useSessionCleanup } from "../lib/hooks";
 import { Brain, Zap, BookOpen } from "lucide-react";
 
 export default function Home() {
-  const { executeQuery } = useStreamingAgent();
+  const { processRepository, executeQuery } = useStreamingAgent();
   useSessionCleanup();
+
+  const handleProcessRepository = (repoUrl: string) => {
+    processRepository(repoUrl);
+  };
 
   const handleSubmit = (repoUrl: string, query: string) => {
     executeQuery(repoUrl, query);
@@ -75,7 +79,10 @@ export default function Home() {
                   <Zap className="w-5 h-5 text-primary-600" />
                   <h3 className="font-bold text-slate-900">Query</h3>
                 </div>
-                <QueryForm onSubmit={handleSubmit} />
+                <QueryForm
+                  onProcessRepository={handleProcessRepository}
+                  onSubmit={handleSubmit}
+                />
               </div>
 
               {/* Info Cards */}

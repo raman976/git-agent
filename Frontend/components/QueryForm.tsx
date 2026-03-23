@@ -8,18 +8,41 @@ import clsx from "clsx";
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://gh-agent.nstsdc.org";
 
 export function QueryForm({
+  onProcessRepository,
   onSubmit,
 }: {
+  onProcessRepository: (repoUrl: string) => void;
   onSubmit: (repoUrl: string, query: string) => void;
 }) {
-  const { repoUrl, query, setRepoUrl, setQuery, isExecuting, clearSession } = useQueryStore();
+  const {
+    repoUrl,
+    query,
+    setRepoUrl,
+    setQuery,
+    isExecuting,
+    isPreparingRepo,
+    repoPrepared,
+    preparedRepoUrl,
+    clearSession,
+  } = useQueryStore();
+
+  const normalizedRepoUrl = repoUrl.trim();
+  const isCurrentRepoPrepared =
+    repoPrepared && preparedRepoUrl === normalizedRepoUrl && normalizedRepoUrl.length > 0;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!repoUrl.trim() || !query.trim()) {
+    if (!normalizedRepoUrl || !query.trim() || !isCurrentRepoPrepared) {
       return;
     }
-    onSubmit(repoUrl, query);
+    onSubmit(normalizedRepoUrl, query);
+  };
+
+  const handleProcessRepository = () => {
+    if (!normalizedRepoUrl) {
+      return;
+    }
+    onProcessRepository(normalizedRepoUrl);
   };
 
   const handleNewSession = async () => {
@@ -47,11 +70,11 @@ export function QueryForm({
       <button
         type="button"
         onClick={handleNewSession}
-        disabled={isExecuting}
+        disabled={isExecuting || isPreparingRepo}
         className={clsx(
           "w-full py-2 px-4 rounded-lg font-semibold flex items-center justify-center gap-2",
           "transition-all duration-200 text-sm",
-          isExecuting
+          isExecuting || isPreparingRepo
             ? "bg-slate-300 text-slate-600 cursor-not-allowed"
             : "bg-slate-200 text-slate-700 hover:bg-slate-300 active:scale-95"
         )}
@@ -71,16 +94,47 @@ export function QueryForm({
           value={repoUrl}
           onChange={(e) => setRepoUrl(e.target.value)}
           placeholder="https://github.com/owner/repository"
-          disabled={isExecuting}
+          disabled={isExecuting || isPreparingRepo}
           className={clsx(
             "w-full px-4 py-3 rounded-lg border-2 font-mono text-sm",
             "bg-white focus:outline-none transition-colors",
-            isExecuting
+            isExecuting || isPreparingRepo
               ? "border-slate-300 bg-slate-50 cursor-not-allowed"
               : "border-slate-300 focus:border-primary-600 focus:ring-2 focus:ring-primary-100"
           )}
         />
       </div>
+
+      {/* Process Repository Button */}
+      <button
+        type="button"
+        onClick={handleProcessRepository}
+        disabled={isExecuting || isPreparingRepo || !normalizedRepoUrl}
+        className={clsx(
+          "w-full py-3 px-4 rounded-lg font-semibold flex items-center justify-center gap-2",
+          "transition-all duration-200 text-white",
+          isExecuting || isPreparingRepo || !normalizedRepoUrl
+            ? "bg-slate-300 cursor-not-allowed"
+            : "bg-emerald-600 hover:bg-emerald-700 active:scale-95 shadow-md hover:shadow-lg"
+        )}
+      >
+        {isPreparingRepo ? (
+          <>
+            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            Processing Repository...
+          </>
+        ) : isCurrentRepoPrepared ? (
+          <>Repository Processed</>
+        ) : (
+          <>Process Repository</>
+        )}
+      </button>
+
+      <p className="text-xs text-slate-500">
+        {isCurrentRepoPrepared
+          ? "Repository is ready. You can now ask questions."
+          : "Process the repository first to enable question submission."}
+      </p>
 
       {/* Query Input */}
       <div className="space-y-2">
@@ -92,13 +146,13 @@ export function QueryForm({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="What does this repository do? How does authentication work? What are the main components?"
-          disabled={isExecuting}
+          disabled={isExecuting || isPreparingRepo || !isCurrentRepoPrepared}
           rows={3}
           className={clsx(
             "w-full px-4 py-3 rounded-lg border-2 resize-none",
             "bg-white focus:outline-none transition-colors",
             "font-sans text-base",
-            isExecuting
+            isExecuting || isPreparingRepo || !isCurrentRepoPrepared
               ? "border-slate-300 bg-slate-50 cursor-not-allowed"
               : "border-slate-300 focus:border-primary-600 focus:ring-2 focus:ring-primary-100"
           )}
@@ -111,11 +165,11 @@ export function QueryForm({
       {/* Submit Button */}
       <button
         type="submit"
-        disabled={isExecuting || !repoUrl.trim() || !query.trim()}
+        disabled={isExecuting || isPreparingRepo || !isCurrentRepoPrepared || !query.trim()}
         className={clsx(
           "w-full py-3 px-4 rounded-lg font-semibold flex items-center justify-center gap-2",
           "transition-all duration-200 text-white",
-          isExecuting || !repoUrl.trim() || !query.trim()
+          isExecuting || isPreparingRepo || !isCurrentRepoPrepared || !query.trim()
             ? "bg-slate-300 cursor-not-allowed"
             : "bg-primary-600 hover:bg-primary-700 active:scale-95 shadow-md hover:shadow-lg"
         )}
@@ -128,7 +182,7 @@ export function QueryForm({
         ) : (
           <>
             <Send className="w-4 h-4" />
-            Analyze Repository
+            Ask Question
           </>
         )}
       </button>

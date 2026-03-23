@@ -9,153 +9,219 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://gh-agent.nstsdc.org";
 export function useStreamingAgent() {
   const {
     setIsExecuting,
+    setRepoPreparing,
+    setRepoPrepared,
     addEvent,
     setPlan,
     addToolCall,
     addAnswerChunk,
     setComplete,
     setError,
+    setSessionId,
     reset,
+    repoPrepared,
+    preparedRepoUrl,
   } = useQueryStore();
+
+  const processRepository = useCallback(async (repoUrl: string) => {
+    const normalizedRepoUrl = repoUrl.trim();
+    if (!normalizedRepoUrl) {
+      setError("Repository URL is required.");
+      return;
+    }
+
+    reset();
+    setRepoPrepared(false, null);
+    setRepoPreparing(true);
+    addEvent({
+      type: "status",
+      data: { stage: "preparing", message: "Starting repository preparation..." },
+    });
+
+    let sessionId = getOrCreateSessionId();
+
+    try {
+      const prepareResponse = await fetch(`${API_URL}/repo/prepare`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          repo_url: normalizedRepoUrl,
+          query: "Repository preprocessing for upcoming questions",
+          session_id: sessionId,
+        }),
+      });
+
+      if (!prepareResponse.ok) {
+        throw new Error(`Failed to start preparation: ${prepareResponse.statusText}`);
+      }
+
+      const { task_id, session_id: returnedSessionId } = await prepareResponse.json();
+      sessionId = returnedSessionId;
+      setSessionId(sessionId);
+
+      const startedAt = Date.now();
+      const timeoutMs = 300000;
+      let preparing = true;
+
+      while (preparing) {
+        if (Date.now() - startedAt > timeoutMs) {
+          throw new Error("Repository preparation timed out.");
+        }
+
+        const statusResponse = await fetch(`${API_URL}/repo/prepare/status/${task_id}`);
+        if (!statusResponse.ok) {
+          if (statusResponse.status === 404 && Date.now() - startedAt < 10000) {
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            continue;
+          }
+          throw new Error(`Failed to get preparation status: ${statusResponse.statusText}`);
+        }
+
+        const statusResult = await statusResponse.json();
+        switch (statusResult.status) {
+          case "completed":
+            preparing = false;
+            setRepoPrepared(true, normalizedRepoUrl);
+            addEvent({
+              type: "status",
+              data: { stage: "preparing", message: "Repository processing completed." },
+            });
+            break;
+          case "error":
+            throw new Error(`Preparation failed: ${statusResult.message || "Unknown error"}`);
+          default:
+            addEvent({
+              type: "status",
+              data: { stage: "preparing", message: "Preparing repository..." },
+            });
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            break;
+        }
+      }
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error occurred";
+      setRepoPrepared(false, null);
+      setError(errorMessage);
+      addEvent({
+        type: "error",
+        data: { error: errorMessage, stage: "preparing" },
+      });
+    } finally {
+      setRepoPreparing(false);
+    }
+  }, [addEvent, reset, setError, setRepoPrepared, setRepoPreparing, setSessionId]);
 
   const executeQuery = useCallback(
     async (repoUrl: string, query: string) => {
+      const normalizedRepoUrl = repoUrl.trim();
+      if (!normalizedRepoUrl || !query.trim()) {
+        setError("Repository URL and question are required.");
+        return;
+      }
+
+      if (!repoPrepared || preparedRepoUrl !== normalizedRepoUrl) {
+        setError("Process the repository first before asking a question.");
+        addEvent({
+          type: "error",
+          data: {
+            error: "Repository is not processed for this URL yet.",
+            stage: "validation",
+          },
+        });
+        return;
+      }
+
       reset();
       setIsExecuting(true);
-      addEvent({ type: "status", data: { stage: "starting", message: "Initializing..." } });
+      addEvent({
+        type: "status",
+        data: { stage: "starting", message: "Starting analysis..." },
+      });
 
-      let sessionId = getOrCreateSessionId(); // Get or create session ID upfront
+      const sessionId = getOrCreateSessionId();
+      setSessionId(sessionId);
 
       try {
-        // Step 1: Start the repository preparation process
         addEvent({
           type: "status",
-          data: { stage: "preparing", message: "Starting repository preparation..." },
+          data: { stage: "reasoning", message: "Generating response..." },
         });
 
-        const prepareResponse = await fetch(`${API_URL}/repo/prepare`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ repo_url: repoUrl, query: query, session_id: sessionId }),
-        });
-
-        if (!prepareResponse.ok) {
-          throw new Error(`Failed to start preparation: ${prepareResponse.statusText}`);
-        }
-
-        const { task_id, session_id: returnedSessionId } = await prepareResponse.json();
-        sessionId = returnedSessionId; // Use the session_id returned by the backend
-
-        // Step 2: Poll for preparation status
-        let preparing = true;
-        const startTime = Date.now();
-        const timeout = 300000; // 5 minutes
-
-        while (preparing) {
-          if (Date.now() - startTime > timeout) {
-            throw new Error("Repository preparation timed out.");
-          }
-
-          const statusResponse = await fetch(`${API_URL}/repo/prepare/status/${task_id}`);
-          if (!statusResponse.ok) {
-            if (statusResponse.status === 404 && Date.now() - startTime < 10000) {
-              await new Promise((resolve) => setTimeout(resolve, 2000));
-              continue;
-            }
-            throw new Error(`Failed to get preparation status: ${statusResponse.statusText}`);
-          }
-
-          const statusResult = await statusResponse.json();
-
-          switch (statusResult.status) {
-            case "completed":
-              preparing = false;
-              addEvent({
-                type: "status",
-                data: { stage: "preparing", message: "Repository ready." },
-              });
-              break;
-            case "error":
-              throw new Error(`Preparation failed: ${statusResult.message}`);
-            case "preparing":
-              addEvent({
-                type: "status",
-                data: { stage: "preparing", message: "Analyzing and cloning repository..." },
-              });
-              await new Promise((resolve) => setTimeout(resolve, 2000));
-              break;
-            default:
-              await new Promise((resolve) => setTimeout(resolve, 2000));
-          }
-        }
-
-        // Step 3: Proceed with the original query logic
-        addEvent({
-          type: "status",
-          data: { stage: "reasoning", message: "Generating complete response..." },
-        });
-
-        const queryResponse = await fetch(`${API_URL}/query`, {
+        const streamResponse = await fetch(`${API_URL}/query/stream`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            repo_url: repoUrl,
+            repo_url: normalizedRepoUrl,
             query,
-            session_id: sessionId, // Use the session ID from the prepare step
+            session_id: sessionId,
             budget_mode: true,
             max_reasoning_steps: 2,
           }),
         });
 
-        if (!queryResponse.ok) {
-          throw new Error(`API error: ${queryResponse.statusText}`);
+        if (!streamResponse.ok) {
+          throw new Error(`API error: ${streamResponse.statusText}`);
         }
-        const payload = await queryResponse.json();
-
-        if (payload?.plan) {
-          setPlan(payload.plan, String(payload?.planning_model_used || "unknown"));
-          addEvent({
-            type: "plan",
-            data: {
-              plan: payload.plan,
-              planning_model: String(payload?.planning_model_used || "unknown"),
-            },
-          });
+        
+        if (!streamResponse.body) {
+          throw new Error("The response body is empty.");
         }
 
-        const toolCalls = Array.isArray(payload?.tool_calls_executed)
-          ? payload.tool_calls_executed
-          : [];
-        for (const [index, toolCall] of toolCalls.entries()) {
-          const toolName = String(toolCall?.name || "unknown");
-          const step = `${index + 1}/${toolCalls.length}`;
-          addToolCall({ step, tool_name: toolName, status: "completed" });
-          addEvent({
-            type: "tool_result",
-            data: {
-              step,
-              tool_name: toolName,
-              result_preview: toolCall?.result_preview,
-            },
-          });
+        const reader = streamResponse.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+
+          for (let i = 0; i < lines.length - 1; i++) {
+            const line = lines[i];
+            if (line.trim() === "") continue;
+            try {
+              const event = JSON.parse(line);
+              addEvent(event); // Log every event
+
+              switch (event.type) {
+                case "plan":
+                  setPlan(event.plan, event.planning_model || "unknown");
+                  break;
+                case "tool_call":
+                  addToolCall({
+                    step: event.step,
+                    tool_name: event.tool_name,
+                    status: "executing",
+                  });
+                  break;
+                case "tool_result":
+                  addToolCall({
+                    step: event.step,
+                    tool_name: event.tool_name,
+                    status: "completed",
+                    result_preview: event.result_preview,
+                  });
+                  break;
+                case "answer_chunk":
+                  addAnswerChunk(event.chunk);
+                  break;
+
+                case "complete":
+                  setComplete(event.model_used || "unknown", event.total_tool_calls || 0);
+                  break;
+                case "error":
+                  throw new Error(event.error);
+              }
+            } catch (e) {
+              console.error("Failed to parse stream line:", line, e);
+            }
+          }
+          buffer = lines[lines.length - 1];
         }
 
-        const finalAnswer = String(payload?.final_answer || "");
-        if (finalAnswer) {
-          addAnswerChunk(finalAnswer);
-        }
-
-        const modelUsed = String(payload?.model_used || "unknown");
-        const totalToolCalls = toolCalls.length;
-        setComplete(modelUsed, totalToolCalls);
-        addEvent({
-          type: "complete",
-          data: {
-            model_used: modelUsed,
-            total_tool_calls: totalToolCalls,
-            mode: "sync",
-          },
-        });
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error occurred";
@@ -176,11 +242,14 @@ export function useStreamingAgent() {
       addAnswerChunk,
       setComplete,
       setError,
+      setSessionId,
       reset,
+      repoPrepared,
+      preparedRepoUrl,
     ]
   );
 
-  return { executeQuery };
+  return { processRepository, executeQuery };
 }
 
 export function useSessionCleanup() {

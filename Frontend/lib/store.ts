@@ -25,6 +25,9 @@ export interface ExecutionEvent {
 export interface QueryState {
   repoUrl: string;
   query: string;
+  isPreparingRepo: boolean;
+  repoPrepared: boolean;
+  preparedRepoUrl: string | null;
   isExecuting: boolean;
   events: ExecutionEvent[];
   plan: string | null;
@@ -38,6 +41,8 @@ export interface QueryState {
 
   setRepoUrl: (url: string) => void;
   setQuery: (query: string) => void;
+  setRepoPreparing: (preparing: boolean) => void;
+  setRepoPrepared: (prepared: boolean, repoUrl?: string | null) => void;
   setIsExecuting: (executing: boolean) => void;
   addEvent: (event: Omit<ExecutionEvent, "id" | "timestamp">) => void;
   setPlan: (plan: string | string[], model: string) => void;
@@ -53,6 +58,9 @@ export interface QueryState {
 export const useQueryStore = create<QueryState>((set) => ({
   repoUrl: "",
   query: "",
+  isPreparingRepo: false,
+  repoPrepared: false,
+  preparedRepoUrl: null,
   isExecuting: false,
   events: [],
   plan: null,
@@ -64,8 +72,25 @@ export const useQueryStore = create<QueryState>((set) => ({
   error: null,
   sessionId: null,
 
-  setRepoUrl: (url: string) => set({ repoUrl: url }),
+  setRepoUrl: (url: string) =>
+    set((state) => {
+      const normalizedIncoming = url.trim();
+      const normalizedPrepared = (state.preparedRepoUrl || "").trim();
+      const samePreparedRepo =
+        normalizedPrepared.length > 0 && normalizedIncoming === normalizedPrepared;
+      return {
+        repoUrl: url,
+        repoPrepared: samePreparedRepo ? state.repoPrepared : false,
+        preparedRepoUrl: samePreparedRepo ? state.preparedRepoUrl : null,
+      };
+    }),
   setQuery: (query: string) => set({ query }),
+  setRepoPreparing: (preparing: boolean) => set({ isPreparingRepo: preparing }),
+  setRepoPrepared: (prepared: boolean, repoUrl?: string | null) =>
+    set({
+      repoPrepared: prepared,
+      preparedRepoUrl: prepared ? repoUrl?.trim() || null : null,
+    }),
   setIsExecuting: (executing: boolean) => set({ isExecuting: executing }),
 
   addEvent: (event: Omit<ExecutionEvent, "id" | "timestamp">) =>
@@ -120,6 +145,7 @@ export const useQueryStore = create<QueryState>((set) => ({
 
   reset: () =>
     set({
+      isPreparingRepo: false,
       isExecuting: false,
       events: [],
       plan: null,
@@ -135,6 +161,9 @@ export const useQueryStore = create<QueryState>((set) => ({
     set({
       repoUrl: "",
       query: "",
+      isPreparingRepo: false,
+      repoPrepared: false,
+      preparedRepoUrl: null,
       isExecuting: false,
       events: [],
       plan: null,
