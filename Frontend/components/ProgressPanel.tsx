@@ -105,8 +105,8 @@ export function ProgressPanel() {
                     {new Date(event.timestamp).toLocaleTimeString()}
                   </span>
                 </div>
-                {event.data.message && (
-                  <p className="text-slate-700 mt-1">{event.data.message}</p>
+                {event.data?.message && (
+                  <p className="text-slate-700 mt-1">{String(event.data.message)}</p>
                 )}
               </div>
             ))}

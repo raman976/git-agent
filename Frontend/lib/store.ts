@@ -94,16 +94,30 @@ export const useQueryStore = create<QueryState>((set) => ({
   setIsExecuting: (executing: boolean) => set({ isExecuting: executing }),
 
   addEvent: (event: Omit<ExecutionEvent, "id" | "timestamp">) =>
-    set((state) => ({
-      events: [
-        ...state.events,
-        {
-          ...event,
-          id: Math.random().toString(36).slice(2),
-          timestamp: Date.now(),
-        },
-      ],
-    })),
+    set((state) => {
+      const rawEvent = event as Record<string, unknown>;
+      const rawData = rawEvent.data;
+      const normalizedData =
+        rawData && typeof rawData === "object"
+          ? (rawData as Record<string, unknown>)
+          : Object.fromEntries(
+              Object.entries(rawEvent).filter(
+                ([key]) => key !== "type" && key !== "id" && key !== "timestamp"
+              )
+            );
+
+      return {
+        events: [
+          ...state.events,
+          {
+            type: (rawEvent.type as ExecutionEvent["type"]) || "status",
+            data: normalizedData,
+            id: Math.random().toString(36).slice(2),
+            timestamp: Date.now(),
+          },
+        ],
+      };
+    }),
 
   setPlan: (plan: string | string[], model: string) => {
     const normalizedPlan = Array.isArray(plan) ? plan.join(" -> ") : plan;
